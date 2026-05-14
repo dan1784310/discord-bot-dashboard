@@ -3,23 +3,17 @@ import requests
 import os
 
 app = Flask(__name__)
+
+# MUST be set in Render env vars (not hardcoded)
 app.secret_key = os.getenv("SECRET_KEY", "dev_secret")
 
-# =====================
-# ENV VARIABLES
-# =====================
 CLIENT_ID = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 
+# 🔴 MUST match Discord + Render exactly
 REDIRECT_URI = "https://discord-bot-dashboard-1-2cw0.onrender.com/callback"
+
 DISCORD_API = "https://discord.com/api"
-
-
-# =====================
-# SAFETY CHECK (non-crashing)
-# =====================
-if not CLIENT_ID or not CLIENT_SECRET:
-    print("WARNING: Missing CLIENT_ID or CLIENT_SECRET")
 
 
 # =====================
@@ -47,26 +41,26 @@ def login():
 
 
 # =====================
-# CALLBACK (FIXED - NO LOOP)
+# CALLBACK (SAFE VERSION)
 # =====================
 @app.route("/callback")
 def callback():
     code = request.args.get("code")
 
     if not code:
-        return redirect("/login")
+        return redirect("/")
+
+    data = {
+        "client_id": CLIENT_ID,
+        "client_secret": CLIENT_SECRET,
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": REDIRECT_URI,
+    }
+
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
     try:
-        data = {
-            "client_id": CLIENT_ID,
-            "client_secret": CLIENT_SECRET,
-            "grant_type": "authorization_code",
-            "code": code,
-            "redirect_uri": REDIRECT_URI,
-        }
-
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
-
         # Get token
         r = requests.post(
             f"{DISCORD_API}/oauth2/token",
@@ -74,23 +68,23 @@ def callback():
             headers=headers
         )
 
-        token_json = r.json()
-        token = token_json.get("access_token")
+        token_data = r.json()
+        access_token = token_data.get("access_token")
 
-        if not token:
-            print("TOKEN ERROR:", token_json)
-            return redirect("/login")
+        if not access_token:
+            print("TOKEN ERROR:", token_data)
+            return redirect("/")
 
         # Get user
         user = requests.get(
             f"{DISCORD_API}/users/@me",
-            headers={"Authorization": f"Bearer {token}"}
+            headers={"Authorization": f"Bearer {access_token}"}
         ).json()
 
-        # Get guilds
+        # Get servers
         guilds = requests.get(
             f"{DISCORD_API}/users/@me/guilds",
-            headers={"Authorization": f"Bearer {token}"}
+            headers={"Authorization": f"Bearer {access_token}"}
         ).json()
 
         session.clear()
@@ -101,31 +95,31 @@ def callback():
 
     except Exception as e:
         print("Callback error:", e)
-        return redirect("/login")
+        return redirect("/")
 
 
 # =====================
-# DASHBOARD (SERVER SELECTOR FIXED)
+# DASHBOARD (SERVER SELECTOR)
 # =====================
 @app.route("/dashboard")
 def dashboard():
     if "user" not in session:
-        return redirect("/login")
+        return redirect("/")
 
     user = session["user"]
     guilds = session.get("guilds", [])
 
     html = f"""
     <h1>Welcome {user['username']}</h1>
-    <h2>Your Servers:</h2>
+    <h2>Your Servers</h2>
     <hr>
     """
 
-    for guild in guilds:
+    for g in guilds:
         html += f"""
         <div style="padding:10px;margin:10px;border:1px solid #ccc">
-            <b>{guild['name']}</b><br>
-            <a href="/server/{guild['id']}">Manage Server</a>
+            <b>{g['name']}</b><br>
+            <a href="/server/{g['id']}">Manage</a>
         </div>
         """
 
@@ -138,15 +132,15 @@ def dashboard():
 @app.route("/server/<guild_id>")
 def server(guild_id):
     if "user" not in session:
-        return redirect("/login")
+        return redirect("/")
 
     return f"""
     <h1>Server Settings</h1>
     <p>Guild ID: {guild_id}</p>
 
     <button>Change Prefix</button><br><br>
-    <button>Toggle Anti-Link</button><br><br>
-    <button>Toggle Leveling</button><br><br>
+    <button>Anti-Link</button><br><br>
+    <button>Leveling</button><br><br>
 
     <a href="/dashboard">Back</a>
     """
