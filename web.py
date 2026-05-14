@@ -1,4 +1,4 @@
-from flask import Flask, redirect, request
+from flask import Flask, redirect, request, session
 import requests
 import os
 
@@ -6,12 +6,12 @@ app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "dev_secret")
 
 # =====================
-# ENV VARIABLES (Render)
+# ENV VARIABLES
 # =====================
 CLIENT_ID = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 
-# IMPORTANT: replace this with your REAL Render URL after deployment
+# 🔴 CHANGE THIS TO YOUR REAL RENDER URL
 REDIRECT_URI = "https://discord-bot-dashboard-1-2cw0.onrender.com/callback"
 
 DISCORD_API = "https://discord.com/api"
@@ -21,11 +21,11 @@ DISCORD_API = "https://discord.com/api"
 # SAFETY CHECK
 # =====================
 if not CLIENT_ID or not CLIENT_SECRET:
-    raise Exception("Missing CLIENT_ID or CLIENT_SECRET in environment variables")
+    print("WARNING: Missing CLIENT_ID or CLIENT_SECRET in environment variables")
 
 
 # =====================
-# ROUTES
+# LOGIN PAGE
 # =====================
 @app.route("/")
 def home():
@@ -43,6 +43,9 @@ def login():
     )
 
 
+# =====================
+# OAUTH CALLBACK
+# =====================
 @app.route("/callback")
 def callback():
     code = request.args.get("code")
@@ -58,32 +61,88 @@ def callback():
         "redirect_uri": REDIRECT_URI,
     }
 
-    headers = {
-        "Content-Type": "application/x-www-form-urlencoded"
-    }
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
-    # Get access token
+    # Get token
     r = requests.post(
         f"{DISCORD_API}/oauth2/token",
         data=data,
         headers=headers
     )
 
-    token_json = r.json()
-    access_token = token_json.get("access_token")
+    token = r.json().get("access_token")
 
-    if not access_token:
-        return f"Failed to get access token: {token_json}", 400
+    if not token:
+        return f"Token error: {r.json()}", 400
 
     # Get user info
     user = requests.get(
         f"{DISCORD_API}/users/@me",
-        headers={"Authorization": f"Bearer {access_token}"}
+        headers={"Authorization": f"Bearer {token}"}
     ).json()
 
-    return f"Logged in as: {user.get('username', 'Unknown')}"
+    # Get guilds (servers)
+    guilds = requests.get(
+        f"{DISCORD_API}/users/@me/guilds",
+        headers={"Authorization": f"Bearer {token}"}
+    ).json()
+
+    session["user"] = user
+    session["guilds"] = guilds
+
+    return redirect("/dashboard")
 
 
+# =====================
+# DASHBOARD (SERVER SELECTOR)
+# =====================
+@app.route("/dashboard")
+def dashboard():
+    user = session.get("user")
+    guilds = session.get("guilds", [])
+
+    if not user:
+        return redirect("/")
+
+    html = f"""
+    <h1>Welcome {user['username']}</h1>
+    <h2>Your Servers:</h2>
+    <hr>
+    """
+
+    for guild in guilds:
+        html += f"""
+        <div style="padding:10px;margin:10px;border:1px solid #ccc">
+            <b>{guild['name']}</b><br>
+            <a href="/server/{guild['id']}">Manage Server</a>
+        </div>
+        """
+
+    return html
+
+
+# =====================
+# SERVER SETTINGS PAGE
+# =====================
+@app.route("/server/<guild_id>")
+def server(guild_id):
+    return f"""
+    <h1>Server Settings</h1>
+    <p>Guild ID: {guild_id}</p>
+
+    <button>Change Prefix</button><br><br>
+    <button>Toggle Anti-Link</button><br><br>
+    <button>Toggle Leveling</button><br><br>
+
+    <a href="/dashboard">Back</a>
+    """
+
+
+# =====================
+# RUN APP (RENDER SAFE)
+# =====================
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)
 # =====================
 # RUN APP (RENDER SAFE)
 # =====================
