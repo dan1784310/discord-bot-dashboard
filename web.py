@@ -5,14 +5,14 @@ import os
 app = Flask(__name__)
 
 # =====================
-# SECRET (REQUIRED FOR SESSIONS)
+# SECRET KEY (REQUIRED)
 # =====================
-app.secret_key = os.getenv("SECRET_KEY", "dev_secret")
+app.secret_key = os.getenv("SECRET_KEY")
 
-# 🔥 FIX FOR RENDER HTTPS SESSIONS
+# safer session config for Render
 app.config.update(
-    SESSION_COOKIE_SECURE=True,
-    SESSION_COOKIE_SAMESITE="None"
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=True
 )
 
 # =====================
@@ -21,17 +21,8 @@ app.config.update(
 CLIENT_ID = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 
-# 🔴 MUST MATCH DISCORD + RENDER EXACTLY
 REDIRECT_URI = "https://discord-bot-dashboard-1-2cw0.onrender.com/callback"
-
 DISCORD_API = "https://discord.com/api"
-
-
-# =====================
-# SAFETY CHECK (NO CRASH)
-# =====================
-if not CLIENT_ID or not CLIENT_SECRET:
-    print("WARNING: Missing CLIENT_ID or CLIENT_SECRET in environment variables")
 
 
 # =====================
@@ -39,7 +30,7 @@ if not CLIENT_ID or not CLIENT_SECRET:
 # =====================
 @app.route("/")
 def home():
-    if "user" in session:
+    if session.get("user"):
         return redirect("/dashboard")
     return '<a href="/login">Login with Discord</a>'
 
@@ -59,17 +50,15 @@ def login():
 
 
 # =====================
-# CALLBACK (SAFE + NO LOOP)
+# CALLBACK
 # =====================
 @app.route("/callback")
 def callback():
     code = request.args.get("code")
-
     if not code:
         return redirect("/login")
 
     try:
-        # GET TOKEN
         data = {
             "client_id": CLIENT_ID,
             "client_secret": CLIENT_SECRET,
@@ -80,6 +69,7 @@ def callback():
 
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
+        # exchange code for token
         r = requests.post(
             f"{DISCORD_API}/oauth2/token",
             data=data,
@@ -93,19 +83,19 @@ def callback():
             print("TOKEN ERROR:", token_json)
             return redirect("/login")
 
-        # GET USER
+        # get user
         user = requests.get(
             f"{DISCORD_API}/users/@me",
             headers={"Authorization": f"Bearer {token}"}
         ).json()
 
-        # GET GUILDS (SERVERS)
+        # get guilds
         guilds = requests.get(
             f"{DISCORD_API}/users/@me/guilds",
             headers={"Authorization": f"Bearer {token}"}
         ).json()
 
-        # SAVE SESSION
+        # save session
         session.clear()
         session["user"] = user
         session["guilds"] = guilds
@@ -118,15 +108,15 @@ def callback():
 
 
 # =====================
-# DASHBOARD (SERVER SELECTOR)
+# DASHBOARD
 # =====================
 @app.route("/dashboard")
 def dashboard():
-    if "user" not in session:
-        return redirect("/login")
-
-    user = session["user"]
+    user = session.get("user")
     guilds = session.get("guilds", [])
+
+    if not user:
+        return redirect("/login")
 
     html = f"""
     <h1>Welcome {user['username']}</h1>
@@ -138,7 +128,7 @@ def dashboard():
         html += f"""
         <div style="padding:10px;margin:10px;border:1px solid #ccc">
             <b>{g['name']}</b><br>
-            <a href="/server/{g['id']}">Manage Server</a>
+            <a href="/server/{g['id']}">Manage</a>
         </div>
         """
 
@@ -150,7 +140,7 @@ def dashboard():
 # =====================
 @app.route("/server/<guild_id>")
 def server(guild_id):
-    if "user" not in session:
+    if not session.get("user"):
         return redirect("/login")
 
     return f"""
@@ -166,7 +156,7 @@ def server(guild_id):
 
 
 # =====================
-# RUN (RENDER)
+# RUN (LOCAL ONLY)
 # =====================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
