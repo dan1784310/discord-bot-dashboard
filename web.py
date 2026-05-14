@@ -11,27 +11,30 @@ app.secret_key = os.getenv("SECRET_KEY", "dev_secret")
 CLIENT_ID = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 
-# 🔴 CHANGE THIS TO YOUR REAL RENDER URL
 REDIRECT_URI = "https://discord-bot-dashboard-1-2cw0.onrender.com/callback"
-
 DISCORD_API = "https://discord.com/api"
 
 
 # =====================
-# SAFETY CHECK
+# SAFETY CHECK (non-crashing)
 # =====================
 if not CLIENT_ID or not CLIENT_SECRET:
-    print("WARNING: Missing CLIENT_ID or CLIENT_SECRET in environment variables")
+    print("WARNING: Missing CLIENT_ID or CLIENT_SECRET")
 
 
 # =====================
-# LOGIN PAGE
+# HOME
 # =====================
 @app.route("/")
 def home():
+    if "user" in session:
+        return redirect("/dashboard")
     return '<a href="/login">Login with Discord</a>'
 
 
+# =====================
+# LOGIN
+# =====================
 @app.route("/login")
 def login():
     return redirect(
@@ -44,65 +47,73 @@ def login():
 
 
 # =====================
-# OAUTH CALLBACK
+# CALLBACK (FIXED - NO LOOP)
 # =====================
 @app.route("/callback")
 def callback():
     code = request.args.get("code")
 
     if not code:
-        return "No code provided", 400
+        return redirect("/login")
 
-    data = {
-        "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET,
-        "grant_type": "authorization_code",
-        "code": code,
-        "redirect_uri": REDIRECT_URI,
-    }
+    try:
+        data = {
+            "client_id": CLIENT_ID,
+            "client_secret": CLIENT_SECRET,
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": REDIRECT_URI,
+        }
 
-    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
-    # Get token
-    r = requests.post(
-        f"{DISCORD_API}/oauth2/token",
-        data=data,
-        headers=headers
-    )
+        # Get token
+        r = requests.post(
+            f"{DISCORD_API}/oauth2/token",
+            data=data,
+            headers=headers
+        )
 
-    token = r.json().get("access_token")
+        token_json = r.json()
+        token = token_json.get("access_token")
 
-    if not token:
-        return f"Token error: {r.json()}", 400
+        if not token:
+            print("TOKEN ERROR:", token_json)
+            return redirect("/login")
 
-    # Get user info
-    user = requests.get(
-        f"{DISCORD_API}/users/@me",
-        headers={"Authorization": f"Bearer {token}"}
-    ).json()
+        # Get user
+        user = requests.get(
+            f"{DISCORD_API}/users/@me",
+            headers={"Authorization": f"Bearer {token}"}
+        ).json()
 
-    # Get guilds (servers)
-    guilds = requests.get(
-        f"{DISCORD_API}/users/@me/guilds",
-        headers={"Authorization": f"Bearer {token}"}
-    ).json()
+        # Get guilds
+        guilds = requests.get(
+            f"{DISCORD_API}/users/@me/guilds",
+            headers={"Authorization": f"Bearer {token}"}
+        ).json()
 
-    session["user"] = user
-    session["guilds"] = guilds
+        session.clear()
+        session["user"] = user
+        session["guilds"] = guilds
 
-    return redirect("/dashboard")
+        return redirect("/dashboard")
+
+    except Exception as e:
+        print("Callback error:", e)
+        return redirect("/login")
 
 
 # =====================
-# DASHBOARD (SERVER SELECTOR)
+# DASHBOARD (SERVER SELECTOR FIXED)
 # =====================
 @app.route("/dashboard")
 def dashboard():
-    user = session.get("user")
-    guilds = session.get("guilds", [])
+    if "user" not in session:
+        return redirect("/login")
 
-    if not user:
-        return redirect("/")
+    user = session["user"]
+    guilds = session.get("guilds", [])
 
     html = f"""
     <h1>Welcome {user['username']}</h1>
@@ -122,10 +133,13 @@ def dashboard():
 
 
 # =====================
-# SERVER SETTINGS PAGE
+# SERVER PAGE
 # =====================
 @app.route("/server/<guild_id>")
 def server(guild_id):
+    if "user" not in session:
+        return redirect("/login")
+
     return f"""
     <h1>Server Settings</h1>
     <p>Guild ID: {guild_id}</p>
@@ -139,12 +153,7 @@ def server(guild_id):
 
 
 # =====================
-# RUN APP (RENDER SAFE)
-# =====================
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
-# =====================
-# RUN APP (RENDER SAFE)
+# RUN
 # =====================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
