@@ -5,11 +5,14 @@ import os
 app = Flask(__name__)
 
 # =====================
-# REQUIRED SECRET (MUST EXIST IN RENDER)
+# SAFE SECRET CHECK
 # =====================
-app.secret_key = os.environ["SECRET_KEY"]
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    print("❌ ERROR: SECRET_KEY missing in environment variables")
 
-# safer session handling for HTTPS (Render)
+app.secret_key = SECRET_KEY or "dev_only_secret"
+
 app.config.update(
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=True
@@ -18,16 +21,26 @@ app.config.update(
 # =====================
 # ENV VARIABLES
 # =====================
-CLIENT_ID = os.environ.get("CLIENT_ID")
-CLIENT_SECRET = os.environ.get("CLIENT_SECRET")
+CLIENT_ID = os.getenv("CLIENT_ID")
+CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 
-# MUST MATCH DISCORD DEV PORTAL EXACTLY
-REDIRECT_URI = os.environ.get(
+if not CLIENT_ID or not CLIENT_SECRET:
+    print("❌ ERROR: Missing CLIENT_ID or CLIENT_SECRET")
+
+REDIRECT_URI = os.getenv(
     "REDIRECT_URI",
     "https://discord-bot-dashboard-1-2cw0.onrender.com/callback"
 )
 
 DISCORD_API = "https://discord.com/api"
+
+
+# =====================
+# HEALTH CHECK (IMPORTANT FOR RENDER DEBUGGING)
+# =====================
+@app.route("/health")
+def health():
+    return "OK", 200
 
 
 # =====================
@@ -58,14 +71,13 @@ def login():
 
 
 # =====================
-# CALLBACK (ROBUST VERSION)
+# CALLBACK
 # =====================
 @app.route("/callback")
 def callback():
     code = request.args.get("code")
-
     if not code:
-        return redirect("/")
+        return redirect("/login")
 
     try:
         data = {
@@ -101,7 +113,6 @@ def callback():
             headers={"Authorization": f"Bearer {token}"}
         ).json()
 
-        # IMPORTANT: clear + reassign session
         session.clear()
         session["user"] = user
         session["guilds"] = guilds
@@ -118,11 +129,10 @@ def callback():
 # =====================
 @app.route("/dashboard")
 def dashboard():
-    user = session.get("user")
-
-    if not user:
+    if not session.get("user"):
         return redirect("/login")
 
+    user = session["user"]
     guilds = session.get("guilds", [])
 
     html = f"""
@@ -166,4 +176,5 @@ def server(guild_id):
 # RUN (LOCAL ONLY)
 # =====================
 if __name__ == "__main__":
+    print("🚀 Flask starting locally...")
     app.run(host="0.0.0.0", port=10000)
