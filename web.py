@@ -4,16 +4,34 @@ import os
 
 app = Flask(__name__)
 
-# MUST be set in Render env vars (not hardcoded)
+# =====================
+# SECRET (REQUIRED FOR SESSIONS)
+# =====================
 app.secret_key = os.getenv("SECRET_KEY", "dev_secret")
 
+# 🔥 FIX FOR RENDER HTTPS SESSIONS
+app.config.update(
+    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_SAMESITE="None"
+)
+
+# =====================
+# ENV VARIABLES
+# =====================
 CLIENT_ID = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 
-# 🔴 MUST match Discord + Render exactly
+# 🔴 MUST MATCH DISCORD + RENDER EXACTLY
 REDIRECT_URI = "https://discord-bot-dashboard-1-2cw0.onrender.com/callback"
 
 DISCORD_API = "https://discord.com/api"
+
+
+# =====================
+# SAFETY CHECK (NO CRASH)
+# =====================
+if not CLIENT_ID or not CLIENT_SECRET:
+    print("WARNING: Missing CLIENT_ID or CLIENT_SECRET in environment variables")
 
 
 # =====================
@@ -41,52 +59,53 @@ def login():
 
 
 # =====================
-# CALLBACK (SAFE VERSION)
+# CALLBACK (SAFE + NO LOOP)
 # =====================
 @app.route("/callback")
 def callback():
     code = request.args.get("code")
 
     if not code:
-        return redirect("/")
-
-    data = {
-        "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET,
-        "grant_type": "authorization_code",
-        "code": code,
-        "redirect_uri": REDIRECT_URI,
-    }
-
-    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        return redirect("/login")
 
     try:
-        # Get token
+        # GET TOKEN
+        data = {
+            "client_id": CLIENT_ID,
+            "client_secret": CLIENT_SECRET,
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": REDIRECT_URI,
+        }
+
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+
         r = requests.post(
             f"{DISCORD_API}/oauth2/token",
             data=data,
             headers=headers
         )
 
-        token_data = r.json()
-        access_token = token_data.get("access_token")
+        token_json = r.json()
+        token = token_json.get("access_token")
 
-        if not access_token:
-            print("TOKEN ERROR:", token_data)
-            return redirect("/")
+        if not token:
+            print("TOKEN ERROR:", token_json)
+            return redirect("/login")
 
-        # Get user
+        # GET USER
         user = requests.get(
             f"{DISCORD_API}/users/@me",
-            headers={"Authorization": f"Bearer {access_token}"}
+            headers={"Authorization": f"Bearer {token}"}
         ).json()
 
-        # Get servers
+        # GET GUILDS (SERVERS)
         guilds = requests.get(
             f"{DISCORD_API}/users/@me/guilds",
-            headers={"Authorization": f"Bearer {access_token}"}
+            headers={"Authorization": f"Bearer {token}"}
         ).json()
 
+        # SAVE SESSION
         session.clear()
         session["user"] = user
         session["guilds"] = guilds
@@ -95,7 +114,7 @@ def callback():
 
     except Exception as e:
         print("Callback error:", e)
-        return redirect("/")
+        return redirect("/login")
 
 
 # =====================
@@ -104,7 +123,7 @@ def callback():
 @app.route("/dashboard")
 def dashboard():
     if "user" not in session:
-        return redirect("/")
+        return redirect("/login")
 
     user = session["user"]
     guilds = session.get("guilds", [])
@@ -119,7 +138,7 @@ def dashboard():
         html += f"""
         <div style="padding:10px;margin:10px;border:1px solid #ccc">
             <b>{g['name']}</b><br>
-            <a href="/server/{g['id']}">Manage</a>
+            <a href="/server/{g['id']}">Manage Server</a>
         </div>
         """
 
@@ -132,7 +151,7 @@ def dashboard():
 @app.route("/server/<guild_id>")
 def server(guild_id):
     if "user" not in session:
-        return redirect("/")
+        return redirect("/login")
 
     return f"""
     <h1>Server Settings</h1>
@@ -147,7 +166,7 @@ def server(guild_id):
 
 
 # =====================
-# RUN
+# RUN (RENDER)
 # =====================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
