@@ -5,11 +5,11 @@ import os
 app = Flask(__name__)
 
 # =====================
-# SESSION SECRET (REQUIRED)
+# REQUIRED SECRET (MUST EXIST IN RENDER)
 # =====================
-app.secret_key = os.getenv("SECRET_KEY")
+app.secret_key = os.environ["SECRET_KEY"]
 
-# safer cookie settings for Render (HTTPS)
+# safer session handling for HTTPS (Render)
 app.config.update(
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=True
@@ -18,10 +18,15 @@ app.config.update(
 # =====================
 # ENV VARIABLES
 # =====================
-CLIENT_ID = os.getenv("CLIENT_ID")
-CLIENT_SECRET = os.getenv("CLIENT_SECRET")
+CLIENT_ID = os.environ.get("CLIENT_ID")
+CLIENT_SECRET = os.environ.get("CLIENT_SECRET")
 
-REDIRECT_URI = "https://discord-bot-dashboard-1-2cw0.onrender.com/callback"
+# MUST MATCH DISCORD DEV PORTAL EXACTLY
+REDIRECT_URI = os.environ.get(
+    "REDIRECT_URI",
+    "https://discord-bot-dashboard-1-2cw0.onrender.com/callback"
+)
+
 DISCORD_API = "https://discord.com/api"
 
 
@@ -40,6 +45,9 @@ def home():
 # =====================
 @app.route("/login")
 def login():
+    if not CLIENT_ID:
+        return "Missing CLIENT_ID", 500
+
     return redirect(
         "https://discord.com/oauth2/authorize"
         f"?client_id={CLIENT_ID}"
@@ -50,7 +58,7 @@ def login():
 
 
 # =====================
-# CALLBACK
+# CALLBACK (ROBUST VERSION)
 # =====================
 @app.route("/callback")
 def callback():
@@ -59,48 +67,54 @@ def callback():
     if not code:
         return redirect("/")
 
-    data = {
-        "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET,
-        "grant_type": "authorization_code",
-        "code": code,
-        "redirect_uri": REDIRECT_URI,
-    }
+    try:
+        data = {
+            "client_id": CLIENT_ID,
+            "client_secret": CLIENT_SECRET,
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": REDIRECT_URI,
+        }
 
-    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
-    r = requests.post(
-        f"{DISCORD_API}/oauth2/token",
-        data=data,
-        headers=headers
-    )
+        r = requests.post(
+            f"{DISCORD_API}/oauth2/token",
+            data=data,
+            headers=headers
+        )
 
-    token_data = r.json()
-    token = token_data.get("access_token")
+        token_json = r.json()
+        token = token_json.get("access_token")
 
-    if not token:
-        print("TOKEN ERROR:", token_data)
-        return redirect("/")
+        if not token:
+            print("TOKEN ERROR:", token_json)
+            return redirect("/login")
 
-    user = requests.get(
-        f"{DISCORD_API}/users/@me",
-        headers={"Authorization": f"Bearer {token}"}
-    ).json()
+        user = requests.get(
+            f"{DISCORD_API}/users/@me",
+            headers={"Authorization": f"Bearer {token}"}
+        ).json()
 
-    guilds = requests.get(
-        f"{DISCORD_API}/users/@me/guilds",
-        headers={"Authorization": f"Bearer {token}"}
-    ).json()
+        guilds = requests.get(
+            f"{DISCORD_API}/users/@me/guilds",
+            headers={"Authorization": f"Bearer {token}"}
+        ).json()
 
-    session.clear()
-    session["user"] = user
-    session["guilds"] = guilds
+        # IMPORTANT: clear + reassign session
+        session.clear()
+        session["user"] = user
+        session["guilds"] = guilds
 
-    return redirect("/dashboard")
+        return redirect("/dashboard")
+
+    except Exception as e:
+        print("Callback crash:", e)
+        return redirect("/login")
 
 
 # =====================
-# DASHBOARD (SERVER SELECTOR)
+# DASHBOARD
 # =====================
 @app.route("/dashboard")
 def dashboard():
