@@ -5,11 +5,11 @@ import os
 app = Flask(__name__)
 
 # =====================
-# SECRET KEY (REQUIRED)
+# SESSION SECRET (REQUIRED)
 # =====================
 app.secret_key = os.getenv("SECRET_KEY")
 
-# safer session config for Render
+# safer cookie settings for Render (HTTPS)
 app.config.update(
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=True
@@ -55,68 +55,61 @@ def login():
 @app.route("/callback")
 def callback():
     code = request.args.get("code")
+
     if not code:
-        return redirect("/login")
+        return redirect("/")
 
-    try:
-        data = {
-            "client_id": CLIENT_ID,
-            "client_secret": CLIENT_SECRET,
-            "grant_type": "authorization_code",
-            "code": code,
-            "redirect_uri": REDIRECT_URI,
-        }
+    data = {
+        "client_id": CLIENT_ID,
+        "client_secret": CLIENT_SECRET,
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": REDIRECT_URI,
+    }
 
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
-        # exchange code for token
-        r = requests.post(
-            f"{DISCORD_API}/oauth2/token",
-            data=data,
-            headers=headers
-        )
+    r = requests.post(
+        f"{DISCORD_API}/oauth2/token",
+        data=data,
+        headers=headers
+    )
 
-        token_json = r.json()
-        token = token_json.get("access_token")
+    token_data = r.json()
+    token = token_data.get("access_token")
 
-        if not token:
-            print("TOKEN ERROR:", token_json)
-            return redirect("/login")
+    if not token:
+        print("TOKEN ERROR:", token_data)
+        return redirect("/")
 
-        # get user
-        user = requests.get(
-            f"{DISCORD_API}/users/@me",
-            headers={"Authorization": f"Bearer {token}"}
-        ).json()
+    user = requests.get(
+        f"{DISCORD_API}/users/@me",
+        headers={"Authorization": f"Bearer {token}"}
+    ).json()
 
-        # get guilds
-        guilds = requests.get(
-            f"{DISCORD_API}/users/@me/guilds",
-            headers={"Authorization": f"Bearer {token}"}
-        ).json()
+    guilds = requests.get(
+        f"{DISCORD_API}/users/@me/guilds",
+        headers={"Authorization": f"Bearer {token}"}
+    ).json()
 
-        # save session
-        session.clear()
-        session["user"] = user
-        session["guilds"] = guilds
+    session.clear()
+    session["user"] = user
+    session["guilds"] = guilds
 
-        return redirect("/dashboard")
-
-    except Exception as e:
-        print("Callback error:", e)
-        return redirect("/login")
+    return redirect("/dashboard")
 
 
 # =====================
-# DASHBOARD
+# DASHBOARD (SERVER SELECTOR)
 # =====================
 @app.route("/dashboard")
 def dashboard():
     user = session.get("user")
-    guilds = session.get("guilds", [])
 
     if not user:
         return redirect("/login")
+
+    guilds = session.get("guilds", [])
 
     html = f"""
     <h1>Welcome {user['username']}</h1>
